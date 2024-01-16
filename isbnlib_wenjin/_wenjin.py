@@ -7,6 +7,7 @@ import logging
 import bs4
 
 from isbnlib._msk import msk
+from isbnlib._core import to_isbn10
 from isbnlib.dev import stdmeta
 from isbnlib.dev._bouth23 import u
 from isbnlib.dev._exceptions import (DataWrongShapeError, ISBNNotConsistentError,
@@ -35,7 +36,7 @@ def parser_search(data):
         if int(total_count) == 0:
             return records
 
-        # Get the first item, use select to get all results
+        # Get the first item, use select() to get all results
         item = search_info.select_one('div.article_list div.article_item')
 
         records['title'] = item.select_one('div.book_name a').string.strip()
@@ -65,12 +66,12 @@ def _mapper(isbn, records):
         # mapping: canonical <- records
         canonical = {}
         canonical['ISBN-13'] = u(isbn)
-        # assert isbn == records['isbn13'], "isbn was mungled!"
         canonical['Title'] = records.get('title', u(''))
         canonical['Authors'] = records.get('authors', u(''))
         canonical['Publisher'] = records.get('publisher', u(''))
         canonical['Year'] = records.get('year', u(''))
         canonical['Language'] = records.get('language', u('zh'))
+        # TODO: Hardcoded to zh for now. Need to use SERVICE_DOC_DETAILS_URL to get doc details
     except:
         raise RecordMappingError(isbn)
     # call stdmeta for extra cleanning and validation
@@ -85,6 +86,15 @@ def query(isbn):
                 ),
                 user_agent=UA,
                 parser=parser_search)
+
+    isbn10 = msk(to_isbn10(isbn))
+    if not data and isbn10:
+        # try to search with isbn10
+        data = wquery(SERVICE_SEARCH_URL.format(
+                isbn=isbn10
+            ),
+            user_agent=UA,
+            parser=parser_search)
 
     if not data:
         raise DataNotFoundAtServiceError()
