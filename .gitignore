@@ -1,25 +1,34 @@
-*(copy)*
-*bak*
-*.*~
-*.mo
-*.egg-info
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
 *.egg
 *.EGG
 *.EGG-INFO
-*-local*
-build/
-develop-eggs/
-eggs/
-fake-eggs/
-parts/
-dist/
-_build/
-*.pyc
-*.pyo
-*.tmp*
-*.swp
-*.vim
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
 .tox/
-*.log
-*.sh
 .coverage
+htmlcov/
+.pytest_cache/
+
+# Editors
+*.swp
+*.*~
+*bak*
+*(copy)*
+
+# Logs & temp
+*.log
+*.tmp*
