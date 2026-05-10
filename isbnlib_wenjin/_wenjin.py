@@ -70,6 +70,21 @@ def _get_detail_field(soup, label_text):
     return ''
 
 
+def _safe_msk(isbn):
+    """Return masked (hyphenated) ISBN, or None if masking is not possible.
+
+    msk() returns '' for unregistered publisher prefixes and raises
+    NotValidISBNError for structurally invalid ISBNs. Both cases are
+    treated as 'cannot mask' and result in None.
+    """
+    if not isbn:
+        return None
+    try:
+        return msk(isbn) or None
+    except Exception:
+        return None
+
+
 def parser_search(data):
     '''Parse the search results page from the Wenjin service.'''
     records = {}
@@ -86,7 +101,15 @@ def parser_search(data):
         item = search_info.select_one('div.article_list div.article_item')
 
         a_tag = item.select_one('div.book_name a')
-        records['title'] = a_tag.string.strip()
+
+        # For long titles, Wenjin wraps truncated text in a child <span> and
+        # puts the full title in the span's title/alt attribute.
+        span = a_tag.find('span')
+        if span:
+            records['title'] = (span.get('title') or span.get('alt') or
+                                 a_tag.get_text(strip=True))
+        else:
+            records['title'] = a_tag.get_text(strip=True)
 
         # Extract docId and dataSource for the detail page request
         records['doc_id'] = a_tag.get('id', '')
@@ -149,17 +172,34 @@ def _mapper(isbn, records):
 
 def query(isbn):
     """Query the Wenjin service for metadata."""
+    # Chinese ISBNs (978-7-*) are indexed with hyphens; try masked form first
+    masked13 = _safe_msk(isbn)
     data = wquery(
-        SERVICE_SEARCH_URL.format(isbn=msk(isbn)),
+        SERVICE_SEARCH_URL.format(isbn=masked13),
         user_agent=UA,
         parser=parser_search,
-    )
+    ) if masked13 else {}
 
-    isbn10 = msk(to_isbn10(isbn))
-    if not data and isbn10:
-        # try to search with isbn10
+    # International ISBNs are indexed without hyphens; try bare ISBN-13 next
+    if not data:
         data = wquery(
-            SERVICE_SEARCH_URL.format(isbn=isbn10),
+            SERVICE_SEARCH_URL.format(isbn=isbn),
+            user_agent=UA,
+            parser=parser_search,
+        )
+
+    # Last resort: try ISBN-10, both masked and bare
+    isbn10_bare = to_isbn10(isbn)
+    isbn10_masked = _safe_msk(isbn10_bare)
+    if not data and isbn10_masked:
+        data = wquery(
+            SERVICE_SEARCH_URL.format(isbn=isbn10_masked),
+            user_agent=UA,
+            parser=parser_search,
+        )
+    if not data and isbn10_bare:
+        data = wquery(
+            SERVICE_SEARCH_URL.format(isbn=isbn10_bare),
             user_agent=UA,
             parser=parser_search,
         )

@@ -7,7 +7,7 @@ import pytest
 from isbnlib.dev._exceptions import DataNotFoundAtServiceError
 from .._wenjin import (
     query, parser_search, parser_detail,
-    _mapper, _parse_language, _parse_authors_detail,
+    _mapper, _parse_language, _parse_authors_detail, _safe_msk,
 )
 
 
@@ -15,6 +15,7 @@ from .._wenjin import (
 # HTML fixtures (no network required)
 # ============================================================
 
+# Chinese book: title as direct text in <a>
 HTML_ONE_RESULT = """
 <html><body>
 <div class="search_information">
@@ -30,6 +31,32 @@ HTML_ONE_RESULT = """
         <div class="book_type">著者：<span class="book_val">（美）布莱恩特（Bryant,R.E.）</span></div>
         <div class="book_type">出版年份：<span class="book_val">2016</span>
           <span class="book_she"><span class="book_val">机械工业出版社</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+
+# Foreign book: long title truncated in display, full title in <span title="...">
+HTML_LONG_TITLE = """
+<html><body>
+<div class="search_information">
+  <b id="totalCnt">1</b>
+  <div class="article_list">
+    <div class="article_item">
+      <div class="book_name">
+        <a href="javascript:void(0);" id="987654321"
+           onclick="makeDetailUrl(this, '/search/showDocDetails?', '987654321', 'ucs09', '');"
+           target="_blank">
+          <span alt="Full Long Title Here" title="Full Long Title Here">Full Long Title ...</span>
+        </a>
+      </div>
+      <div class="book_right">
+        <div class="book_type">著者：<span class="book_val">Vickers</span></div>
+        <div class="book_type">出版年份：<span class="book_val">2006</span>
+          <span class="book_she"><span class="book_val">Routledge</span></span>
         </div>
       </div>
     </div>
@@ -117,6 +144,28 @@ def test_parse_language_empty():
 
 
 # ============================================================
+# Unit tests: _safe_msk (no network)
+# ============================================================
+
+def test_safe_msk_valid_chinese():
+    assert _safe_msk('9787302423287') == '978-7-302-42328-7'
+
+def test_safe_msk_unregistered_prefix_returns_none():
+    # 978-9-999... is not a registered publisher prefix; msk() returns ''
+    assert _safe_msk('9789999999991') is None
+
+def test_safe_msk_invalid_isbn10_returns_none():
+    # '0000000000' is structurally invalid for msk
+    assert _safe_msk('0000000000') is None
+
+def test_safe_msk_none_input():
+    assert _safe_msk(None) is None
+
+def test_safe_msk_empty_input():
+    assert _safe_msk('') is None
+
+
+# ============================================================
 # Unit tests: _parse_authors_detail (no network)
 # ============================================================
 
@@ -141,7 +190,7 @@ def test_parse_authors_chief_editor():
 # ============================================================
 
 def test_parser_search_one_result():
-    """Parses a Chinese book correctly, including doc_id and data_source."""
+    """Parses a Chinese book (title as direct text) correctly."""
     records = parser_search(HTML_ONE_RESULT)
     assert records['title'] == '深入理解计算机系统'
     assert records['year'] == '2016'
@@ -149,6 +198,14 @@ def test_parser_search_one_result():
     assert '布莱恩特' in records['authors'][0]
     assert records['doc_id'] == '123456789'
     assert records['data_source'] == 'ucs01'
+
+
+def test_parser_search_long_title():
+    """Uses span title attribute for long titles (foreign books)."""
+    records = parser_search(HTML_LONG_TITLE)
+    assert records['title'] == 'Full Long Title Here'
+    assert records['doc_id'] == '987654321'
+    assert records['data_source'] == 'ucs09'
 
 
 def test_parser_search_zero_results():
@@ -227,6 +284,13 @@ def test_mapper_empty_records():
 
 # ============================================================
 # Integration tests (require network access)
+#
+# ISBN format coverage:
+#   9787302423287  Chinese 978-7-*  → indexed as masked ISBN-13
+#   9787111334620  Chinese 978-7-*  → multi-author via detail page
+#   7115151695     Pre-978 Chinese  → indexed as bare ISBN-10
+#   9780132662369  International   → indexed as bare ISBN-13
+#   9780415976527  International   → long title with <span> wrapper
 # ============================================================
 
 @pytest.mark.network
@@ -248,6 +312,32 @@ def test_query_chinese_multi_author():
 
 
 @pytest.mark.network
+def test_query_pre978_bare_isbn10():
+    """Old pre-978 Chinese ISBN found via bare ISBN-10."""
+    result = query('9787115151698')  # same book as 7115151695
+    assert result['ISBN-13'] == '9787115151698'
+    assert result['Title']
+    assert result['Language'] == 'en'
+
+
+@pytest.mark.network
+def test_query_international_bare_isbn13():
+    """International ISBN found via bare ISBN-13."""
+    result = query('9780132662369')
+    assert result['ISBN-13'] == '9780132662369'
+    assert result['Language'] == 'en'
+
+
+@pytest.mark.network
+def test_query_long_title_span_wrapper():
+    """Foreign book with long title stored in <span title="..."> attribute."""
+    result = query('9780415976527')
+    assert result['ISBN-13'] == '9780415976527'
+    assert '...' not in result['Title']
+    assert result['Language'] == 'en'
+
+
+@pytest.mark.network
 def test_query_result_has_all_fields():
     """All canonical metadata fields are present."""
     result = query('9787302423287')
@@ -258,5 +348,6 @@ def test_query_result_has_all_fields():
 @pytest.mark.network
 def test_query_not_found():
     """Raises DataNotFoundAtServiceError for a valid ISBN not in Wenjin."""
+    # 9789999999991: valid check digit, unregistered prefix, confirmed 0 results
     with pytest.raises(DataNotFoundAtServiceError):
-        query('9787000000002')
+        query('9789999999991')
