@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 '''Query the Wenjin service for metadata from The National Library of China. '''
 
-
 import logging
 
 import bs4
@@ -9,25 +8,18 @@ import bs4
 from isbnlib._msk import msk
 from isbnlib._core import to_isbn10
 from isbnlib.dev import stdmeta
-from isbnlib.dev._bouth23 import u
-from isbnlib.dev._exceptions import (DataWrongShapeError, ISBNNotConsistentError,
-                              DataNotFoundAtServiceError, NoDataForSelectorError,
-                              RecordMappingError)
+from isbnlib.dev._exceptions import (DataNotFoundAtServiceError, RecordMappingError)
 from isbnlib.dev.webquery import query as wquery
 
 UA = 'isbnlib (gzip)'
 SERVICE_SEARCH_URL = 'http://find.nlc.cn/search/doSearch?actualQuery=identifer:({isbn})'
-SERVICE_DOC_DETAILS_URL = 'http://find.nlc.cn/search/showDocDetails?docId={docID}&dataSource={ds}'
 LOGGER = logging.getLogger(__name__)
 
+
 def parser_search(data):
-    '''Parse the response from the Wenjin service. The input data is the result webpage in html from the search.'''
+    '''Parse the search results page from the Wenjin service.'''
     records = {}
-
     soup = bs4.BeautifulSoup(data, features='html.parser')
-    
-    #logging.basicConfig(level=logging.DEBUG)
-
     try:
         search_info = soup.find('div', class_='search_information')
         total_count = search_info.select_one('b#totalCnt').contents[0]
@@ -51,8 +43,8 @@ def parser_search(data):
                 records['publisher'] = val.select_one('span.book_she span.book_val').contents[0].strip()
 
         LOGGER.info(records)
-    except (AttributeError, KeyError) as ex:
-        LOGGER.debug('Error parsing WorldCat html. Did the layout change?')
+    except (AttributeError, KeyError):
+        LOGGER.debug('Error parsing Wenjin html. Did the layout change?')
         records = {}
 
     return records
@@ -60,41 +52,36 @@ def parser_search(data):
 
 def _mapper(isbn, records):
     """Map canonical <- records."""
-    # canonical:
-    # -> ISBN-13, Title, Authors, Publisher, Year, Language
     try:
-        # mapping: canonical <- records
         canonical = {}
-        canonical['ISBN-13'] = u(isbn)
-        canonical['Title'] = records.get('title', u(''))
-        canonical['Authors'] = records.get('authors', u(''))
-        canonical['Publisher'] = records.get('publisher', u(''))
-        canonical['Year'] = records.get('year', u(''))
-        canonical['Language'] = records.get('language', u('zh'))
-        # TODO: Hardcoded to zh for now. Need to use SERVICE_DOC_DETAILS_URL to get doc details
-    except:
+        canonical['ISBN-13'] = isbn
+        canonical['Title'] = records.get('title', '')
+        canonical['Authors'] = records.get('authors', '')
+        canonical['Publisher'] = records.get('publisher', '')
+        canonical['Year'] = records.get('year', '')
+        canonical['Language'] = records.get('language', 'zh')
+    except Exception:
         raise RecordMappingError(isbn)
-    # call stdmeta for extra cleanning and validation
+    # call stdmeta for extra cleaning and validation
     return stdmeta(canonical)
+
 
 def query(isbn):
     """Query the Wenjin service for metadata."""
-
-    data = wquery(SERVICE_SEARCH_URL.format(
-                    isbn=msk(isbn)
-                    #isbn='11103.78'
-                ),
-                user_agent=UA,
-                parser=parser_search)
+    data = wquery(
+        SERVICE_SEARCH_URL.format(isbn=msk(isbn)),
+        user_agent=UA,
+        parser=parser_search,
+    )
 
     isbn10 = msk(to_isbn10(isbn))
     if not data and isbn10:
         # try to search with isbn10
-        data = wquery(SERVICE_SEARCH_URL.format(
-                isbn=isbn10
-            ),
+        data = wquery(
+            SERVICE_SEARCH_URL.format(isbn=isbn10),
             user_agent=UA,
-            parser=parser_search)
+            parser=parser_search,
+        )
 
     if not data:
         raise DataNotFoundAtServiceError()
